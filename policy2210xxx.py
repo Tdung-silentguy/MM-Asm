@@ -25,7 +25,8 @@ class Policy2210xxx(Policy):
     def __init__(self):
         # Student code here
         self.used_stocks = list()    # used stocks are kept in ascending order
-        self.unused_stocks = list()  # while unused stocks are kept in descending order 
+        self.unused_stocks = list()  # while unused stocks are kept in descending order
+        self.previous_rmarea = None # this var is used to store the prev remaining area of the first stock for the reset cond
         self.first_stock = None  # this var is used to track the first used stock
     
     def reset(self):
@@ -33,11 +34,16 @@ class Policy2210xxx(Policy):
         self.used_stocks.clear()
         self.unused_stocks.clear()
         self.first_stock = None
+        self.previous_rmarea = None
     
     def get_action(self, observation, info):
         # Student code here
 
         # DETECTING ENVIRONMENT RESET
+        if self.first_stock is not None:
+            current_rmarea = self.first_stock.rmarea
+            if self.previous_rmarea is not None and current_rmarea > self.previous_rmarea:
+                self.reset() #environment has reset; resetting self
 
         # PREPARING DATA
 
@@ -62,7 +68,8 @@ class Policy2210xxx(Policy):
                     self.first_stock = stock_obj
                 self.unused_stocks.append(stock_obj)
             self.unused_stocks.sort(reverse=True)
-
+        if self.first_stock is not None:
+            self.previous_rmarea = self.first_stock.rmarea # Update previous rmarea for first_stock
         # ACTUAL PLACING PRODUCTS INTO STOCKS
 
         # Ensure product has demand > 0

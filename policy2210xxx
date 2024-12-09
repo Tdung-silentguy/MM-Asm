@@ -1,0 +1,156 @@
+from policy import Policy
+import numpy as np
+
+class ProdObj:
+    size = [0,0]    # list of 2
+    demand = 0      # int
+    def __init__(self, insize, indemand):
+        self.size = insize
+        self.demand = indemand
+    def __init__(self, indict): # indict is dict
+        self.size = indict["size"]
+        self.demand = indict["quantity"]
+    def __lt__(self, other):
+        return (self.size[0] * self.size[1] < other.size[0] * other.size[1])
+
+class Policy2210xxx(Policy):
+    def __init__(self, policy_id):
+        self.policy_id = policy_id
+        self.patterns = []  # List of patterns
+        self.current_pattern_idx = 0  
+        
+    def solve_master_problem(self, products, patterns):
+        """Simple linear programming solver for master problem"""
+        n_patterns = len(patterns)
+        n_products = len(products)
+        
+        # Create coefficient matrix A
+        A = np.zeros((n_products, n_patterns))
+        for j, pattern in enumerate(patterns):
+            for prod_idx, count in pattern['items'].items():
+                A[prod_idx, j] = count
+                
+        # Create demand vector b
+        b = np.array([prod.demand for prod in products])
+        
+        # Solve using numpy's least squares (approximation of LP)
+        try:
+            x = np.linalg.lstsq(A, b, rcond=None)[0]
+            # Calculate dual values (approximation)
+            dual_values = np.dot(np.linalg.pinv(A), np.ones(n_patterns))
+            return x, dual_values
+        except:
+            return None, None
+
+    def find_valid_position(self, stock, prod_size, used_positions):
+        """Find next valid position in stock"""
+        stock_w, stock_h = self._get_stock_size_(stock)
+        prod_w, prod_h = prod_size
+        
+        # Try normal orientation
+        for x in range(stock_w - prod_w + 1):
+            for y in range(stock_h - prod_h + 1):
+                pos = (x, y)
+                if pos not in used_positions and self._can_place_(stock, pos, prod_size):
+                    return pos, prod_size
+                    
+        # Try rotated orientation
+        prod_size_rot = [prod_h, prod_w]
+        for x in range(stock_w - prod_h + 1):
+            for y in range(stock_h - prod_w + 1):
+                pos = (x, y)
+                if pos not in used_positions and self._can_place_(stock, pos, prod_size_rot):
+                    return pos, prod_size_rot
+                    
+        return None, None
+
+    def generate_initial_patterns(self, products, stock):
+        """Generate initial cutting patterns"""
+        stock_w, stock_h = self._get_stock_size_(stock)
+        patterns = []
+        
+        # Create simple patterns - one product type per pattern
+        for i, prod in enumerate(products):
+            pattern = {'items': {}, 'positions': []}
+            pos_list = []
+            count = 0
+            
+            # Try to place as many items as possible
+            for x in range(0, stock_w - prod.size[0] + 1, prod.size[0]):
+                for y in range(0, stock_h - prod.size[1] + 1, prod.size[1]):
+                    if all(abs(x - px) >= prod.size[0] or abs(y - py) >= prod.size[1] 
+                          for px, py in pos_list):
+                        pos_list.append((x, y))
+                        count += 1
+            
+            if count > 0:
+                pattern['items'][i] = count
+                pattern['positions'] = pos_list
+                patterns.append(pattern)
+                
+        return patterns
+
+    def get_action(self, observation, info):
+        # Convert observation to products list
+        products = [ProdObj(prod) for prod in observation["products"] if prod["quantity"] > 0]
+        if not products:
+            return {"stock_idx": -1, "size": [0, 0], "position": (0, 0)}
+            
+        # Initialize patterns if empty
+        if not self.patterns:
+            self.patterns = self.generate_initial_patterns(products, observation["stocks"][0])
+            if not self.patterns:
+                return {"stock_idx": -1, "size": [0, 0], "position": (0, 0)}
+        
+        # Try to find next valid position from current pattern
+        while self.current_pattern_idx < len(self.patterns):
+            pattern = self.patterns[self.current_pattern_idx]
+            
+            # Find product that still needs to be cut
+            for prod_idx, count in pattern['items'].items():
+                if products[prod_idx].demand > 0:
+                    used_positions = set()
+                    
+                    # Try each stock
+                    for stock_idx, stock in enumerate(observation["stocks"]):
+                        pos, size = self.find_valid_position(stock, 
+                                                          products[prod_idx].size,
+                                                          used_positions)
+                        if pos is not None:
+                            return {
+                                "stock_idx": stock_idx,
+                                "size": size,
+                                "position": pos
+                            }
+                        used_positions.add(pos)
+                        
+            self.current_pattern_idx += 1
+            
+        # If we've used all patterns, generate new ones
+        self.current_pattern_idx = 0
+        x, dual_values = self.solve_master_problem(products, self.patterns)
+        
+        if x is not None and dual_values is not None:
+            # Use the results to guide the next pattern creation
+            sorted_products = sorted(enumerate(products), 
+                                  key=lambda x: dual_values[x[0]] * x[1].size[0] * x[1].size[1],
+                                  reverse=True)
+            
+            # Try to create a new pattern with the most valuable products
+            new_pattern = {'items': {}, 'positions': []}
+            stock = observation["stocks"][0]
+            stock_w, stock_h = self._get_stock_size_(stock)
+            used_area = np.zeros((stock_w, stock_h))
+            
+            for i, prod in sorted_products:
+                if dual_values[i] > 0:
+                    pos, size = self.find_valid_position(stock, prod.size, set())
+                    if pos is not None:
+                        new_pattern['items'][i] = new_pattern['items'].get(i, 0) + 1
+                        new_pattern['positions'].append(pos)
+            
+            if new_pattern['items']:
+                self.patterns.append(new_pattern)
+
+        # If no valid action found, return default action
+        return {"stock_idx": -1, "size": [0, 0], "position": (0, 0)}

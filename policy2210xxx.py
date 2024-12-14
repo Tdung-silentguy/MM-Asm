@@ -25,22 +25,13 @@ class Policy2210xxx(Policy):
     def __init__(self, policy_id):
         # Student code here
         self.used_stocks = list()    # used stocks are kept in ascending order
-        self.unused_stocks = list()  # while unused stocks are kept in descending order 
+        self.unused_stocks = list()  # while unused stocks are kept in descending order
+        self.previous_rmarea = None # this var is used to store the prev remaining area of the first stock for the reset cond
+        self.fstock = None  # this var is used to track the first used stock
         self.policy_id = policy_id
-        # FOR BEST-FIT
-        self.first_stock = None  # this var is used to track the first used stock
-    
-    def reset(self):
-        # Student code here
-        self.used_stocks.clear()
-        self.unused_stocks.clear()
-        self.first_stock = None
-    
     def get_action(self, observation, info):
         # Student code here
         if self.policy_id == 1:
-            # DETECTING ENVIRONMENT RESET
-
             # PREPARING DATA
 
             # Preparing prods
@@ -57,13 +48,38 @@ class Policy2210xxx(Policy):
 
             # Preparing stocks
             enum_stocks = enumerate(observation["stocks"])
-            if self.first_stock == None:
+            # these actions are executed only once
+            if self.fstock == None:
                 for i, stock in enum_stocks:
                     stock_obj = StockObj(stock, i)
-                    if self.first_stock == None:
-                        self.first_stock = stock_obj
                     self.unused_stocks.append(stock_obj)
-                #self.unused_stocks.sort(reverse=True)
+                self.unused_stocks.sort(reverse=True)
+                self.fstock = self.unused_stocks[0]
+                #print("First stock's orgidx = ", self.fstock.orgidx)
+            else:
+                # DETECTING ENV RESET
+                fidx = self.fstock.orgidx
+                observed_stock = None
+                for i, stock in enum_stocks:
+                    if i==fidx:
+                        observed_stock = stock
+                        break
+                #print("Current FS rmarea = ", self.fstock.rmarea)
+                if (observed_stock[0,0] == -1):
+                    # reset everything
+                    self.used_stocks.clear()
+                    self.unused_stocks.clear()
+                    self.fstock = None
+                    self.previous_rmarea = None
+                    #print("----- ENVIRONMENT RESET DETECTED! ----------------")
+                    enum_stocks = enumerate(observation["stocks"])
+                    # reset enumerate so counter i starts from 0
+                    for i, stock in enum_stocks:
+                        stock_obj = StockObj(stock, i)
+                        self.unused_stocks.append(stock_obj)
+                    self.unused_stocks.sort(reverse=True)
+                    self.fstock = self.unused_stocks[0]
+                    #print("First stock's orgidx = ", self.fstock.orgidx)
 
             # ACTUAL PLACING PRODUCTS INTO STOCKS
 
@@ -120,7 +136,7 @@ class Policy2210xxx(Policy):
                         self.used_stocks.append(new_stock)
                         #self.used_stocks.sort()
 
-        return {"stock_idx": stock_idx, "size": prod_size, "position": (pos_x, pos_y)}
+            return {"stock_idx": stock_idx, "size": prod_size, "position": (pos_x, pos_y)}
 
     # Student code here
     # You can add more functions if needed
